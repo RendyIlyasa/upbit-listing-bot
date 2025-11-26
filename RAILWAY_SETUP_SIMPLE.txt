@@ -1,0 +1,49 @@
+🚀 SETUP BOT DI RAILWAY (GRATIS 24/7)
+
+STEP 1: BUAT GITHUB REPO
+========================
+1. Pergi ke https://github.com/new
+2. Nama repo: upbit-listing-bot
+3. Pilih Public
+4. Create repository
+5. Copy link repo kamu
+
+STEP 2: PUSH KODE KE GITHUB
+==========================
+Di Replit, buka Terminal dan jalankan:
+
+git config --global user.name "Your Name"
+git config --global user.email "your@email.com"
+git add .
+git commit -m "Initial commit"
+git remote add origin https://github.com/YOURNAME/upbit-listing-bot.git
+git branch -M main
+git push -u origin main
+
+(Ganti YOURNAME dengan username GitHub kamu)
+
+STEP 3: DEPLOY KE RAILWAY
+=========================
+1. Pergi ke https://railway.app
+2. Click "Start a New Project"
+3. Pilih "Deploy from GitHub"
+4. Authorize Railway
+5. Pilih repository upbit-listing-bot
+6. Click "Deploy"
+
+STEP 4: TAMBAH SECRET VARIABLES
+===============================
+Di Railway dashboard, click "Variables":
+- BOT_TOKEN = (dari Replit)
+- CHAT_ID = (dari Replit)
+- ETHERSCAN_API = (dari Replit)
+- UPBIT_WALLET = (dari Replit)
+
+STEP 5: TUNGGU & LIHAT LOGS
+===========================
+- Railway akan auto-build
+- Click "Logs" untuk lihat status
+- Bot langsung 24/7! 🎉
+
+SELESAI! Bot kamu gratis 24/7 di Railway
+==========================================
