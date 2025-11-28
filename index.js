@@ -30,10 +30,8 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
 const ETHERSCAN_API = process.env.ETHERSCAN_API || "";
 
-// Support multiple wallets (default: 3 Upbit official wallets)
-const UPBIT_WALLETS_RAW = process.env.UPBIT_WALLETS || 
-    "0xba826fec90cefdf6706858e5fbafcb27a290fbe0,0x5e032243d507c743b061ef021e2ec7fcc6d3ab89,0xc9cf0ec93d764f5c9571fd12f764bae7fc87c84e";
-const UPBIT_WALLETS = UPBIT_WALLETS_RAW.split(",").map(w => w.trim()).filter(Boolean);
+// Support single wallet from env (default: Upbit 2 Hot wallet - most active)
+const UPBIT_WALLET = process.env.UPBIT_WALLET || "0xba826fec90cefdf6706858e5fbafcb27a290fbe0";
 
 if (!BOT_TOKEN || !CHAT_ID) {
     console.error("BOT_TOKEN dan CHAT_ID harus diisi pada .env");
@@ -57,8 +55,8 @@ if (!fs.existsSync(LOGS_DIR)) {
     fs.mkdirSync(LOGS_DIR, { recursive: true });
 }
 
-// Track last tx per wallet
-let lastWalletTxHash = {};
+// Track last tx
+let lastWalletTxHash = null;
 
 // util log harian
 function getTodayLogFile() {
@@ -121,118 +119,74 @@ async function checkUpbitNewListings() {
 }
 
 // --------------------------------------------------------------------------------
-// 2) WALLET TRACKER (Multiple wallets)
+// 2) WALLET TRACKER
 // --------------------------------------------------------------------------------
 async function checkWallet() {
-    if (!ETHERSCAN_API || UPBIT_WALLETS.length === 0) return;
+    if (!ETHERSCAN_API || !UPBIT_WALLET) return;
 
-    for (const wallet of UPBIT_WALLETS) {
-        try {
-            const url = `https://api.etherscan.io/v2/api?chainid=1&module=account&action=tokentx&address=${wallet}&sort=desc&apikey=${ETHERSCAN_API}`;
-            const r = await axios.get(url, { timeout: 10000 });
-            const result = r.data.result;
-            if (!result || result.length === 0 || typeof result === "string")
-                continue;
+    try {
+        const url = `https://api.etherscan.io/v2/api?chainid=1&module=account&action=tokentx&address=${UPBIT_WALLET}&sort=desc&apikey=${ETHERSCAN_API}`;
+        const r = await axios.get(url, { timeout: 10000 });
+        const result = r.data.result;
+        if (!result || result.length === 0 || typeof result === "string")
+            return;
 
-            const tx = result[0];
+        const tx = result[0];
 
-            // first init
-            if (!lastWalletTxHash[wallet]) {
-                lastWalletTxHash[wallet] = tx.hash;
-                log(`Init wallet ${wallet.slice(0, 10)}: ${tx.hash}`);
-                continue;
-            }
+        // first init
+        if (!lastWalletTxHash) {
+            lastWalletTxHash = tx.hash;
+            log(`Init wallet ${UPBIT_WALLET.slice(0, 10)}: ${tx.hash}`);
+            return;
+        }
 
-            // new transaction
-            if (tx.hash !== lastWalletTxHash[wallet]) {
-                lastWalletTxHash[wallet] = tx.hash;
+        // new transaction
+        if (tx.hash !== lastWalletTxHash) {
+            lastWalletTxHash = tx.hash;
 
-                const tokenName = tx.tokenName || "UNKNOWN";
-                const tokenSymbol = tx.tokenSymbol || "";
-                const value = Number(tx.value) / 10 ** (tx.tokenDecimal || 18);
-                const walletLabel = wallet === UPBIT_WALLETS[0] ? "Upbit 2 (Hot)" : 
-                                   wallet === UPBIT_WALLETS[1] ? "Upbit 3 (Hot)" : "Upbit Cold";
+            const tokenName = tx.tokenName || "UNKNOWN";
+            const tokenSymbol = tx.tokenSymbol || "";
+            const value = Number(tx.value) / 10 ** (tx.tokenDecimal || 18);
 
-                log(`${walletLabel} received: ${tokenName}`);
+            log(`Wallet received: ${tokenName}`);
 
-                const msg = `🔔 *Upbit Wallet Received Token*
+            const msg = `🔔 *Upbit Wallet Received Token*
 
-📍 *${walletLabel}*
 🪙 *${tokenName}* (${tokenSymbol})
 Jumlah: *${value.toLocaleString()}*
 Tx: https://etherscan.io/tx/${tx.hash}`;
 
-                await bot.sendMessage(CHAT_ID, msg, { parse_mode: "Markdown" });
-            }
-        } catch (err) {
-            log(`Wallet error (${wallet.slice(0, 10)}): ${err.message}`);
+            await bot.sendMessage(CHAT_ID, msg, { parse_mode: "Markdown" });
         }
+    } catch (err) {
+        log("Wallet error: " + err.message);
     }
 }
 
 // --------------------------------------------------------------------------------
-// 3) Manual scan wallet (All 3 wallets aggregated)
+// 3) Manual scan wallet
 // --------------------------------------------------------------------------------
 async function scanUpbitWallet() {
-    if (!ETHERSCAN_API || UPBIT_WALLETS.length === 0) {
-        return "❌ ETHERSCAN_API atau wallets tidak diset.";
+    if (!ETHERSCAN_API || !UPBIT_WALLET) {
+        return "❌ ETHERSCAN_API atau UPBIT_WALLET tidak diset.";
     }
 
     try {
-        const tokenMap = {};
-        const walletLabels = {
-            [UPBIT_WALLETS[0]]: "Upbit 2 (Hot)",
-            [UPBIT_WALLETS[1]]: "Upbit 3 (Hot)",
-            [UPBIT_WALLETS[2]]: "Upbit Cold"
-        };
+        const url = `https://api.etherscan.io/v2/api?chainid=1&module=account&action=tokentx&address=${UPBIT_WALLET}&page=1&offset=10&sort=desc&apikey=${ETHERSCAN_API}`;
+        const r = await axios.get(url, { timeout: 10000 });
+        const txs = r.data.result;
 
-        // Fetch from all 3 wallets
-        for (const wallet of UPBIT_WALLETS) {
-            try {
-                const url = `https://api.etherscan.io/v2/api?chainid=1&module=account&action=tokentx&address=${wallet}&page=1&offset=50&sort=desc&apikey=${ETHERSCAN_API}`;
-                const r = await axios.get(url, { timeout: 10000 });
-                const txs = r.data.result;
-
-                if (!txs || txs.length === 0 || typeof txs === "string") continue;
-
-                txs.forEach((tx) => {
-                    const symbol = tx.tokenSymbol || "UNKNOWN";
-                    const name = tx.tokenName || "Unknown";
-                    const amount = Number(tx.value) / (10 ** (tx.tokenDecimal || 18));
-
-                    if (!tokenMap[symbol]) {
-                        tokenMap[symbol] = {
-                            name,
-                            symbol,
-                            totalAmount: 0,
-                            latestTx: tx.hash,
-                            latestWallet: walletLabels[wallet]
-                        };
-                    }
-                    tokenMap[symbol].totalAmount += amount;
-                    tokenMap[symbol].latestTx = tx.hash; // Always update to latest
-                });
-            } catch (err) {
-                log(`Scan error for wallet ${wallet.slice(0, 10)}: ${err.message}`);
-            }
+        if (!txs || typeof txs === "string" || txs.length === 0) {
+            return "Tidak ada data transaksi.";
         }
 
-        if (Object.keys(tokenMap).length === 0) {
-            return "Tidak ada transaksi token.";
-        }
+        let output = `🔍 *Scan Wallet Upbit*\n\n`;
 
-        // Sort by amount (descending) and get top 10
-        const sorted = Object.values(tokenMap)
-            .sort((a, b) => b.totalAmount - a.totalAmount)
-            .slice(0, 10);
-
-        let output = `📊 *Token Summary - All Upbit Wallets*\n\n`;
-
-        sorted.forEach((token, idx) => {
-            output += `${idx + 1}. *${token.symbol}* (${token.name})
-   Total: *${token.totalAmount.toLocaleString('en-US', { maximumFractionDigits: 2 })}*
-   From: ${token.latestWallet}
-   [Tx](https://etherscan.io/tx/${token.latestTx})
+        txs.slice(0, 5).forEach((tx) => {
+            const value = tx.value / 10 ** tx.tokenDecimal;
+            output += `🪙 *${tx.tokenName}* (${tx.tokenSymbol})
+Jumlah: *${value.toLocaleString()}*
+Tx: https://etherscan.io/tx/${tx.hash}
 
 `;
         });
@@ -299,8 +253,37 @@ bot.onText(/\/checknow/, async (msg) => {
 // cek listing manual
 bot.onText(/\/checklisting/, async (msg) => {
     await bot.sendMessage(msg.chat.id, "⏳ Mengecek listing baru di Upbit...");
-    await checkUpbitNewListings();
-    bot.sendMessage(msg.chat.id, "📌 Done.");
+    try {
+        const res = await axios.get(UPBIT_MARKET_API, { timeout: 10000 });
+        const markets = res.data || [];
+        
+        if (!markets || markets.length === 0) {
+            return bot.sendMessage(msg.chat.id, "❌ Gagal mengambil data Upbit.");
+        }
+
+        const currentMarkets = new Set(markets.map((m) => m.market));
+        const newListings = [];
+
+        for (const m of markets) {
+            if (!knownMarkets.has(m.market)) {
+                newListings.push(m);
+                knownMarkets.add(m.market);
+            }
+        }
+
+        if (newListings.length === 0) {
+            return bot.sendMessage(msg.chat.id, "✅ Tidak ada listing baru. Total pairs: " + markets.length);
+        }
+
+        let output = `🚀 *LISTING BARU DITEMUKAN!* (${newListings.length} coins)\n\n`;
+        newListings.slice(0, 10).forEach((m, idx) => {
+            output += `${idx + 1}. *${m.english_name}* (${m.korean_name})\n   \`${m.market}\`\n\n`;
+        });
+
+        bot.sendMessage(msg.chat.id, output, { parse_mode: "Markdown" });
+    } catch (err) {
+        bot.sendMessage(msg.chat.id, "❌ Gagal cek listing: " + err.message);
+    }
 });
 
 // scan wallet manual
