@@ -2,12 +2,12 @@ import express from "express";
 const app = express();
 
 app.all("/", (req, res) => {
-  res.send("🔥 Upbit Bot is Running (Replit KeepAlive)");
+  res.send("🔥 Upbit Bot is Running");
 });
 
 function keepAlive() {
   app.listen(3000, () => {
-    console.log("🌐 KeepAlive server running on port 3000");
+    console.log("🌐 Server running on port 3000");
   });
 }
 
@@ -15,7 +15,6 @@ keepAlive();
 
 import dotenv from "dotenv";
 import axios from "axios";
-import * as cheerio from "cheerio";
 import TelegramBot from "node-telegram-bot-api";
 import fs from "fs";
 import path from "path";
@@ -31,7 +30,6 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
 const ETHERSCAN_API = process.env.ETHERSCAN_API || "";
 const UPBIT_WALLET = process.env.UPBIT_WALLET || "";
-const WATCH_TOKENS_RAW = process.env.WATCH_TOKENS || "";
 
 if (!BOT_TOKEN || !CHAT_ID) {
     console.error("BOT_TOKEN dan CHAT_ID harus diisi pada .env");
@@ -50,28 +48,34 @@ bot.on("polling_error", (error) => {
     console.log("Polling error:", error.code);
 });
 
-const LOG_FILE = path.join(__dirname, "logs.txt");
+const LOGS_DIR = path.join(__dirname, "logs");
 
-// In-memory state
-let lastNoticeId = null;
-let lastWalletTxHash = null;
-let lastVolumeSnapshot = {};
-let alerts = [];
-let watchTokens = WATCH_TOKENS_RAW.split(",").map(s => s.trim()).filter(Boolean);
-
-// util: logging
-function log(text) {
-    const line = `[${new Date().toISOString()}] ${text}\n`;
-    fs.appendFileSync(LOG_FILE, line);
-    console.log(line.trim());
+// Create logs directory if not exists
+if (!fs.existsSync(LOGS_DIR)) {
+    fs.mkdirSync(LOGS_DIR, { recursive: true });
 }
 
-// util: add alert (store in-memory + log)
-function addAlert(type, title, detail) {
-    const a = { type, title, detail, ts: new Date().toISOString() };
-    alerts.unshift(a);
-    if (alerts.length > 200) alerts.pop();
-    log(`ALERT ${type}: ${title} - ${detail}`);
+// In-memory state
+let lastWalletTxHash = null;
+
+// util: get today's log file
+function getTodayLogFile() {
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    return path.join(LOGS_DIR, `${today}.txt`);
+}
+
+// util: logging (auto daily files)
+function log(text) {
+    const now = new Date();
+    const timestamp = now.toISOString();
+    const line = `[${timestamp}] ${text}\n`;
+    
+    // Write to today's log file
+    const logFile = getTodayLogFile();
+    fs.appendFileSync(logFile, line);
+    
+    // Also console log
+    console.log(line.trim());
 }
 
 // ----------------------------
@@ -110,7 +114,6 @@ async function checkUpbitNewListings() {
                 const englishName = m.english_name || "";
                 
                 log(`🚀 NEW LISTING DETECTED: ${marketName} (${englishName})`);
-                addAlert("upbit_listing", `${marketName} - ${englishName}`, koreanName);
                 
                 const msg = `🚀 *UPBIT NEW LISTING DETECTED!*
 
@@ -154,7 +157,7 @@ async function checkWallet() {
             const tokenSymbol = tx.tokenSymbol || "";
             const value = Number(tx.value) / (10 ** (tx.tokenDecimal || 18));
             const msg = `🔔 *Upbit Wallet Received Token*\n\nToken: *${tokenName}* ${tokenSymbol ? `(${tokenSymbol})` : ""}\nAmount: ${value.toLocaleString()}\nTx: https://etherscan.io/tx/${tx.hash}`;
-            addAlert("wallet_receive", `${tokenName} ${tokenSymbol}`, `Tx: ${tx.hash}`);
+            log(`Wallet receive: ${tokenName} ${tokenSymbol}`);
             await bot.sendMessage(CHAT_ID, msg, { parse_mode: "Markdown" });
         }
     } catch (err) {
@@ -163,54 +166,7 @@ async function checkWallet() {
 }
 
 // ----------------------------
-// 3) Volume checker (CoinGecko)
-// ----------------------------
-async function fetchVolumeCoinGecko(contractAddress) {
-    try {
-        const url = `https://api.coingecko.com/api/v3/coins/ethereum/contract/${contractAddress}`;
-        const res = await axios.get(url, { timeout: 10000 });
-        const volUsd = res.data?.market_data?.total_volume?.usd;
-        const name = res.data?.name;
-        const symbol = res.data?.symbol;
-        return { volUsd: volUsd || 0, name: name || contractAddress, symbol: symbol || "" };
-    } catch (err) {
-        return null;
-    }
-}
-
-async function checkVolumes() {
-    if (watchTokens.length === 0) return;
-    for (const contract of watchTokens) {
-        try {
-            const info = await fetchVolumeCoinGecko(contract);
-            if (!info) {
-                log(`CoinGecko: token not found or error for ${contract}`);
-                continue;
-            }
-            const key = contract.toLowerCase();
-            const vol = Number(info.volUsd || 0);
-
-            if (!lastVolumeSnapshot[key]) {
-                lastVolumeSnapshot[key] = vol;
-                continue;
-            }
-
-            if (vol > lastVolumeSnapshot[key] * 1.5 && vol > 1000) {
-                const title = `Volume spike ${info.name} (${info.symbol.toUpperCase()})`;
-                const detail = `24h_volume_usd=${vol.toFixed(2)} (prev=${lastVolumeSnapshot[key].toFixed(2)})`;
-                addAlert("volume_spike", title, detail);
-                await bot.sendMessage(CHAT_ID, `📈 *VOLUME SPIKE*\n${title}\n${detail}`, { parse_mode: "Markdown" });
-            }
-
-            lastVolumeSnapshot[key] = vol;
-        } catch (err) {
-            log(`Volume check error for ${contract}: ${err.message || err}`);
-        }
-    }
-}
-
-// ----------------------------
-// 4) Quick Volume Check (BTC & ETH)
+// 3) Quick Volume Check (BTC & ETH)
 // ----------------------------
 async function getQuickVolume() {
     try {
@@ -240,7 +196,7 @@ Change 24h: *${eth.usd_24h_change?.toFixed(2) || 0}%*`;
 }
 
 // ----------------------------
-// 5) Scan Wallet Manual
+// 4) Scan Wallet Manual
 // ----------------------------
 async function scanUpbitWallet() {
     if (!ETHERSCAN_API || !UPBIT_WALLET) {
@@ -282,11 +238,7 @@ const menuText = `🔥 *Upbit Listing Detector — Menu*
 *Commands:*
 /start - Menu utama
 /features - Lihat fitur aktif
-/alerts - Lihat list alert terbaru
-/logs - Ambil 50 baris terakhir logs
-/listtokens - Lihat token yang dipantau
-/addtoken <contract> - Tambah token
-/removetoken <contract> - Hapus token
+/logs - Lihat semua log hari ini
 /checknow - Jalankan pengecekan manual
 /volume - Cek harga & volume BTC/ETH
 /scanwallet - Scan wallet Upbit manual
@@ -298,66 +250,39 @@ bot.onText(/\/start/, async (msg) => {
 
 bot.onText(/\/features/, async (msg) => {
     const features = `*Fitur Aktif*
-• Upbit notice scraping (auto detect listing)
+• Upbit new listing detector (real-time)
 • Wallet Upbit incoming token tracker
-• Volume check via CoinGecko
-• Token watchlist management
-• Alerts & logs (/alerts dan /logs)
+• Quick volume check (BTC/ETH)
+• Wallet scan manual
 • Auto-check setiap 30 detik`;
     await bot.sendMessage(msg.chat.id, features, { parse_mode: "Markdown" });
 });
 
-bot.onText(/\/alerts/, async (msg) => {
-    if (alerts.length === 0) return bot.sendMessage(msg.chat.id, "Belum ada alerts tersimpan.");
-    const lines = alerts.slice(0, 20).map(a => `• [${a.type}] ${a.title}\n  ${a.detail}\n  ${a.ts}`).join("\n\n");
-    await bot.sendMessage(msg.chat.id, `📋 *Recent Alerts*\n\n${lines}`, { parse_mode: "Markdown" });
-});
-
 bot.onText(/\/logs/, async (msg) => {
     try {
-        const data = fs.existsSync(LOG_FILE) ? fs.readFileSync(LOG_FILE, "utf8") : "";
-        const lines = data.trim().split("\n").slice(-30).join("\n");
+        const logFile = getTodayLogFile();
+        const today = new Date().toISOString().split('T')[0];
+        
+        if (!fs.existsSync(logFile)) {
+            return bot.sendMessage(msg.chat.id, `📝 Belum ada log untuk hari ini (${today})`);
+        }
+        
+        const data = fs.readFileSync(logFile, "utf8");
+        const lines = data.trim();
+        
         if (!lines) return bot.sendMessage(msg.chat.id, "Log kosong.");
-        await bot.sendMessage(msg.chat.id, `\`\`\`\n${lines}\n\`\`\``, { parse_mode: "Markdown" });
+        
+        const msg_text = `📝 *Log Hari Ini (${today})*\n\n\`\`\`\n${lines}\n\`\`\``;
+        await bot.sendMessage(msg.chat.id, msg_text, { parse_mode: "Markdown" });
     } catch (err) {
         await bot.sendMessage(msg.chat.id, "Gagal membaca log: " + (err.message || err));
     }
-});
-
-bot.onText(/\/listtokens/, async (msg) => {
-    if (watchTokens.length === 0) return bot.sendMessage(msg.chat.id, "Belum ada token yang dipantau.\nTambah dengan /addtoken <contract>");
-    const out = watchTokens.map((c, i) => `${i+1}. \`${c}\``).join("\n");
-    await bot.sendMessage(msg.chat.id, `📌 *Watch Tokens*\n${out}`, { parse_mode: "Markdown" });
-});
-
-bot.onText(/\/addtoken (.+)/, async (msg, match) => {
-    const contract = (match[1] || "").trim();
-    if (!/^0x[a-fA-F0-9]{40}$/.test(contract)) {
-        return bot.sendMessage(msg.chat.id, "Format contract invalid. Pastikan contract address Ethereum lengkap (0x...).");
-    }
-    if (!watchTokens.includes(contract)) {
-        watchTokens.push(contract);
-        addAlert("watch_add", "Added watch token", contract);
-        await bot.sendMessage(msg.chat.id, `✅ Token ditambahkan: \`${contract}\``, { parse_mode: "Markdown" });
-    } else {
-        await bot.sendMessage(msg.chat.id, "Token sudah ada di watchlist.");
-    }
-});
-
-bot.onText(/\/removetoken (.+)/, async (msg, match) => {
-    const contract = (match[1] || "").trim();
-    const idx = watchTokens.indexOf(contract);
-    if (idx === -1) return bot.sendMessage(msg.chat.id, "Token tidak ditemukan di watchlist.");
-    watchTokens.splice(idx, 1);
-    addAlert("watch_remove", "Removed watch token", contract);
-    await bot.sendMessage(msg.chat.id, `🗑️ Dihapus: \`${contract}\``, { parse_mode: "Markdown" });
 });
 
 bot.onText(/\/checknow/, async (msg) => {
     await bot.sendMessage(msg.chat.id, "⏳ Menjalankan pengecekan manual...");
     await checkUpbitNewListings();
     await checkWallet();
-    await checkVolumes();
     await bot.sendMessage(msg.chat.id, "✅ Selesai pengecekan manual.");
 });
 
@@ -384,11 +309,7 @@ setInterval(() => {
     checkWallet();
 }, 30000); // 30 detik
 
-setInterval(() => {
-    checkVolumes();
-}, 60000); // 60 detik
-
 // Startup
-log("🔥 Enhanced Upbit Bot Started...");
-console.log("🔥 Enhanced Upbit Bot Started...");
-console.log("Commands: /start, /features, /alerts, /logs, /listtokens, /addtoken, /removetoken, /checknow, /volume, /scanwallet");
+log("🔥 Upbit Listing Bot Started...");
+console.log("🔥 Upbit Listing Bot Started...");
+console.log("Commands: /start, /features, /logs, /checknow, /volume, /scanwallet");
