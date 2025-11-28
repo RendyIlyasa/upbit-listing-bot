@@ -139,35 +139,6 @@ Dari: \`${tx.from.slice(0, 10)}...\`
 }
 
 // ----------------------------
-// 3) Quick Volume Check (CoinGecko)
-// ----------------------------
-async function getQuickVolume() {
-  try {
-    const res = await axios.get(
-      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_vol=true&include_24hr_change=true",
-      { timeout: 10000 }
-    );
-    const btc = res.data.bitcoin;
-    const eth = res.data.ethereum;
-
-    return `📊 *Volume & Harga Crypto*
-
-🟠 *Bitcoin (BTC)*
-Harga: *$${Number(btc.usd).toLocaleString()}*
-Volume 24h: *$${(Number(btc.usd_24h_vol)/1_000_000_000).toFixed(2)}B*
-Change 24h: *${(btc.usd_24h_change||0).toFixed(2)}%*
-
-🔵 *Ethereum (ETH)*
-Harga: *$${Number(eth.usd).toLocaleString()}*
-Volume 24h: *$${(Number(eth.usd_24h_vol)/1_000_000_000).toFixed(2)}B*
-Change 24h: *${(eth.usd_24h_change||0).toFixed(2)}%*`;
-  } catch (err) {
-    log("Quick volume error: " + (err.message || err));
-    return "⚠️ Gagal mengambil data volume: " + (err.message || err);
-  }
-}
-
-// ----------------------------
 // Telegram commands
 // ----------------------------
 const menuText = `🔥 *Upbit Listing Detector — Menu*
@@ -177,7 +148,6 @@ const menuText = `🔥 *Upbit Listing Detector — Menu*
 /features - Lihat fitur aktif
 /logs - Lihat semua log hari ini
 /checknow - Jalankan pengecekan manual
-/volume - Cek harga & volume BTC/ETH
 /scanwallet - Scan wallet Upbit manual
 `;
 
@@ -215,14 +185,6 @@ bot.onText(/\/checknow/, async (msg) => {
   await bot.sendMessage(msg.chat.id, scan, { parse_mode: "Markdown" });
   await bot.sendMessage(msg.chat.id, "✅ Selesai pengecekan manual.");
 });
-
-// volume
-bot.onText(/\/volume/, async (msg) => {
-  await bot.sendMessage(msg.chat.id, "⏳ Mengambil data volume...");
-  const v = await getQuickVolume();
-  await bot.sendMessage(msg.chat.id, v, { parse_mode: "Markdown" });
-});
-
 // scanwallet
 bot.onText(/\/scanwallet/, async (msg) => {
   await bot.sendMessage(msg.chat.id, "⏳ Scan transaksi wallet Upbit...");
